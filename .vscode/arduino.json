@@ -1,0 +1,6 @@
+{
+    "port": "/dev/ttyACM0",
+    "board": "arduino:avr:uno",
+    "programmer": "avrisp",
+    "sketch": "pwm_test/pwm_test.ino"
+}
