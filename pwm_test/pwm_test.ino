@@ -19,6 +19,8 @@ int RMotor_PWM = 9;
 int LMotor_Dir = 6;
 int RMotor_Dir = 5;
 
+int DistSensor_1 = 2;
+
 void setup() {
   Serial.begin(115200);
   // D9 - D10 15.6 kHz 10 bit
@@ -33,6 +35,8 @@ void setup() {
   pinMode(RMotor_Dir, OUTPUT);
   digitalWrite(LMotor_Dir, HIGH);
   digitalWrite(RMotor_Dir, LOW);
+
+  pinMode(DistSensor_1, INPUT);
 }
 
 void loop() {
@@ -44,5 +48,6 @@ void loop() {
   // Serial.println( speed );
   // analogWrite(10, speed);
   // analogWrite(9, speed);
-  // delay(500);
+  Serial.println( digitalRead(DistSensor_1));
+  delay(200);
 }
