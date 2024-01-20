@@ -8,7 +8,7 @@ Orange : Forward / Reverse. Overcuirrent protection is 0.8A.
   If that current of 0.8A is reached, protection is enabled
   and needs to be re-energized to start again.
 */
-//0 (max speed) - 1023 (min speed)
+//0 (max speed) (0v) - 1023 (min speed) (5v)
 int speed = 1023-100;
 int acc = 100;
 int dir = 1;
@@ -20,6 +20,7 @@ int LMotor_Dir = 6;
 int RMotor_Dir = 5;
 
 int DistSensor_1 = 2;
+int DistSensor_Out_1 = 3;
 
 void setup() {
   Serial.begin(115200);
@@ -37,6 +38,8 @@ void setup() {
   digitalWrite(RMotor_Dir, LOW);
 
   pinMode(DistSensor_1, INPUT);
+  // pinMode(DistSensor_Out_1, OUTPUT);
+  analogWrite(DistSensor_Out_1, int(float(2.5) * float(1023 / 5)));
 }
 
 void loop() {
