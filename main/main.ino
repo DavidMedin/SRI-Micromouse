@@ -15,7 +15,7 @@ Orange : Forward / Reverse. Overcuirrent protection is 0.8A.
 //0 (max speed) (0v) - 1023 (min speed) (5v)
 const int NO_SPEED = 1023;
 const int ALL_SPEED = 0;
-int speed = 1023-200;
+int speed = 1023-100;
 int acc = 100;
 int dir = 1;
 
@@ -42,7 +42,13 @@ Green : data - sda
 Blue : clock - scl
 */
 OPT3101 sensor;
+//The pin the sensor *should* output a pulse on when a sample is ready.
 int dist_sample_ready_pin = 1;
+
+// Number of samples the sensor does per sensor output.
+int dist_sensor_sample_count = 500;
+// Estimated max time a sensor output takes in milliseconds.
+int dist_sensor_time_max = (int) ( (float)( dist_sensor_sample_count * 25 /*ms*/ ) * 1.06 );
 
 // Accelerometer pins (the order might be wrong).
 int acc_x_pin = A0;
@@ -192,40 +198,52 @@ void loop() {
     unsigned long int dt = this_loop - last_loop; // dt = delta time, the time since the last loop.
     last_loop = this_loop;
 
-    // interpret data
-    mill_p_msecond_vel = ( (float)(last_dist - sensor.distanceMillimeters) ) / (float)dt;
+    // interpret data.
+    // The distance traveled - in mm - since the last sensor output. 
+    int distance_traveled = last_dist - sensor.distanceMillimeters;
+    mill_p_msecond_vel = ( (float)distance_traveled ) / (float)dt;
     last_dist = sensor.distanceMillimeters;
     mmps = (float)mill_p_msecond_vel * 1000.0; // 1000.0
 
-    Serial.print("vel:");
-    Serial.print(mmps);
-    Serial.print(",");
-    Serial.print("dist:");
-    Serial.print(sensor.distanceMillimeters);
-    Serial.print(",");
-    Serial.print("going:");
-    Serial.print(going);
-    Serial.println("");
+    // Serial.print("vel:");
+    // Serial.print(mmps);
+    // Serial.print(",");
+    // Serial.print("dist:");
+    // Serial.print(sensor.distanceMillimeters);
+    // Serial.print(",");
+    // Serial.print("going:");
+    // Serial.print(going);
+    // Serial.println("");
+      // Simple state machine.
+      if(going == true) { // going forward?
+        //  try to predict if the robot will be at or pass the target distance (100 mm).
+        int dist_to_wall = sensor.distanceMillimeters;
+        int predict_dist_next_sample = dist_to_wall - distance_traveled;
+        Serial.print("Distance to wall : ");
+        Serial.println(dist_to_wall);
+        Serial.print("Predicted distance : ");
+        Serial.println(predict_dist_next_sample);
+
+        if(predict_dist_next_sample <= 400) { // If close enough to wall.
+          going = false; // try to stop.
+          flip_motor_dir(); // try to go backwards.
+        }
+      }else if(going == false) { // going backwards. Just being explicit.
+        float tolerance = 20.0;
+        if(mmps < tolerance) {
+          // Looks like we are sufficiently stopped.
+          analogWrite(LMotor_PWM, NO_SPEED); // try to stop.
+          analogWrite(RMotor_PWM, NO_SPEED);
+        }
+
+        if(sensor.distanceMillimeters > 200) { // If far enough away...
+          going = true; // go forward.
+          fwd_motor_dir(); 
+        }
+      }
   }
 
-  if(going == true) {
-    if(sensor.distanceMillimeters <= 100) {
-      going = false;
-      flip_motor_dir();
-    }
-  }else if(going == false) { // Just being explicit.
-    float tolerance = 20.0;
-    if(mmps < tolerance) {
-      // Looks like we are sufficiently stopped.
-      analogWrite(LMotor_PWM, NO_SPEED);
-      analogWrite(RMotor_PWM, NO_SPEED);
-    }
 
-    if(sensor.distanceMillimeters > 200) {
-      going = true;
-      fwd_motor_dir();
-    }
-  }
   // Serial.println(is_ready);
   
   // if(sensor.distanceMillimeters <= 100 ) {
