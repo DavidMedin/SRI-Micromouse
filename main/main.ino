@@ -15,13 +15,13 @@ Orange : Forward / Reverse. Overcuirrent protection is 0.8A.
 //0 (max speed) (0v) - 1023 (min speed) (5v)
 const int NO_SPEED = 1023;
 const int ALL_SPEED = 0;
-int speed = 1023-100;
+int speed = NO_SPEED;
 int acc = 100;
-int dir = 1;
+//int dir = 1;
 
 // *in is the input from the motor to the computer.
 //        PWM | In  | Dir
-// right : 10    8    11 
+// right : 10   11    8 
 // left :  9    12    13
 
 int RMotor_PWM = 10;
@@ -43,12 +43,12 @@ Blue : clock - scl
 */
 OPT3101 sensor;
 //The pin the sensor *should* output a pulse on when a sample is ready.
-int dist_sample_ready_pin = 1;
+int dist_sample_ready_pin = 2;
 
 // Number of samples the sensor does per sensor output.
-int dist_sensor_sample_count = 500;
+int dist_sensor_sample_count = pow(2,5);
 // Estimated max time a sensor output takes in milliseconds.
-int dist_sensor_time_max = (int) ( (float)( dist_sensor_sample_count * 25 /*ms*/ ) * 1.06 );
+// int dist_sensor_time_max = (int) ( (float)( dist_sensor_sample_count * 25 /*ms*/ ) * 1.06 );
 
 // Accelerometer pins (the order might be wrong).
 int acc_x_pin = A0;
@@ -63,6 +63,31 @@ int acc_x_offset = 0;
 // 250?
 // ====================================
 
+
+float K_p = 7.0;
+float K_i = 0.2; // 2
+float K_d = 0.5; // 1
+
+int32_t target_distance = 200;
+
+float int_e = 0;
+int16_t last_error = 0;
+
+volatile bool data_ready = false;
+void data_ready_func() {
+    data_ready = true;
+}
+
+void pid_init() {
+  if(data_ready){
+    sensor.readOutputRegs();
+    data_ready = false;
+
+    last_error = sensor.distanceMillimeters - target_distance; // init the derivative.
+  	int_e = 0; // init the integral
+  }
+
+}
 
 
 void setup() {
@@ -95,27 +120,20 @@ void setup() {
     while (1) {}
   }
 
-  sensor.setFrameTiming(500); 
+  sensor.setFrameTiming(dist_sensor_sample_count); 
   // 500 samples * 0.25 ms + 6% = whatevre
   // 256 samples * 0.25 ms + 6% = 68 ms
   sensor.setChannel(1); // TX1, middle channel
 
   sensor.setBrightness(OPT3101Brightness::Adaptive);
+  sensor.setContinuousMode();
+  sensor.enableDataReadyOutput(1);
+
+  attachInterrupt(digitalPinToInterrupt(dist_sample_ready_pin), data_ready_func, RISING);
+  sensor.enableTimingGenerator();
   // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-  // unsigned long int ahhh = millis();
-  // Serial.print(ahhh);
-  // Serial.println();
-  // Serial.print((unsigned long int)((float)1000*((float)millis() / (float)1000)));
-  // Serial.println();
-  // Serial.print((float)millis() / (float)1000)
-  sensor.enableDataReadyOutput(2);
-  // sensor.enableTimingGenerator();
-  // sensor.setContinuousMode();
-  sensor.startSample();
-  // sensor.startSample();
-
-  acc_x_offset = analogRead(acc_x_pin);
+  pid_init();
 }
 
 // ================= Robot State =========
@@ -145,154 +163,80 @@ void bwd_motor_dir() {
   digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
 }
 
+// Power referes to 'effort', and direction.
+// 1023 is full 'power' (attempt max speed), 0 is 'no power',
+// and -1023 is full power in the opposite direction.
+void set_motor_power(int power) {
+    const int max_power = 300; // nice
+    int bounded_power = constrain( power, -max_power, max_power);
+    Serial.print(",bounded_power:");
+    Serial.print(power);
+    bounded_power >= 0 ? fwd_motor_dir() : bwd_motor_dir();
+    int abs_speed = ( -1 * ( abs(bounded_power) - 500 ) ) + 500;
 
-// Motor Signal State
-unsigned long int mspr = 0; // milliseconds per rotation
-int last_rot_sig = 0; // last value recieved from the motor.
-unsigned long int time_ms_of_last_sig = millis();
-// ===
+    analogWrite(RMotor_PWM, abs_speed );
+    analogWrite(LMotor_PWM, abs_speed );
+    Serial.print(",motors:");
+    Serial.print(abs_speed);
+    Serial.print(",dir:");
+    Serial.print(LMotor_Dir);
+}
 
-
-// Distance Sensor State
-int16_t last_dist = 0;
-
-float mill_p_msecond_vel;
-float mmps;
-// ========
-
-
-// long int vel_x_g = 0;
 unsigned long int last_loop = 0;
 void loop() {
-  // sensor.sample();
 
 
-  // ============ vvvvvvvvvvvv ========== Reading Motor 1/9th signals to (poorly) determine speed.
-  // calculate rotations per second.
-  // int r_sig_motor = digitalRead(RMotor_In);
-  // unsigned long int time_now = millis(); 
-  // mspr = (time_now-time_ms_of_last_sig) * 9;
-  // if(r_sig_motor != last_rot_sig) {
-  //   // +1 1/9 rotation.
-    
-  //   time_ms_of_last_sig = time_now;
-  //   last_rot_sig = r_sig_motor;
-  // }
+    if(data_ready) {
 
-  // Serial.print( (1000.0 / mspr) );
-  // Serial.print( mspr);
-  // Serial.println();
+      sensor.readOutputRegs();
+      // read time
+      unsigned long int this_loop = millis(); // milliseconds
+      float dt = ( (float)(this_loop - last_loop) / 1000.0 ) ; // dt = delta time, the time since the last loop.
+      last_loop = this_loop;
 
-  // ================== ^^^^^^^^^^^^^^^=====================
+      // PID Loop:
 
-  // ============= vvvvvvvvvvvvvvv ============= Distance Sensor
-
-  // == Use sensor 3 (the forward sensor) to guess velocity.
-  int is_ready = sensor.isSampleDone(); // digitalRead(dist_sample_ready_pin);
-  if(is_ready == 1) {
-    sensor.readOutputRegs();
-    sensor.startSample();
-
-    // read time
-    unsigned long int this_loop = millis();
-    unsigned long int dt = this_loop - last_loop; // dt = delta time, the time since the last loop.
-    last_loop = this_loop;
-
-    // interpret data.
-    // The distance traveled - in mm - since the last sensor output. 
-    int distance_traveled = last_dist - sensor.distanceMillimeters;
-    mill_p_msecond_vel = ( (float)distance_traveled ) / (float)dt;
-    last_dist = sensor.distanceMillimeters;
-    mmps = (float)mill_p_msecond_vel * 1000.0; // 1000.0
-
-    // Serial.print("vel:");
-    // Serial.print(mmps);
-    // Serial.print(",");
-    // Serial.print("dist:");
-    // Serial.print(sensor.distanceMillimeters);
-    // Serial.print(",");
-    // Serial.print("going:");
-    // Serial.print(going);
-    // Serial.println("");
-      // Simple state machine.
-      if(going == true) { // going forward?
-        //  try to predict if the robot will be at or pass the target distance (100 mm).
-        int dist_to_wall = sensor.distanceMillimeters;
-        int predict_dist_next_sample = dist_to_wall - distance_traveled;
-        Serial.print("Distance to wall : ");
-        Serial.println(dist_to_wall);
-        Serial.print("Predicted distance : ");
-        Serial.println(predict_dist_next_sample);
-
-        if(predict_dist_next_sample <= 400) { // If close enough to wall.
-          going = false; // try to stop.
-          flip_motor_dir(); // try to go backwards.
-        }
-      }else if(going == false) { // going backwards. Just being explicit.
-        float tolerance = 20.0;
-        if(mmps < tolerance) {
-          // Looks like we are sufficiently stopped.
-          analogWrite(LMotor_PWM, NO_SPEED); // try to stop.
-          analogWrite(RMotor_PWM, NO_SPEED);
-        }
-
-        if(sensor.distanceMillimeters > 200) { // If far enough away...
-          going = true; // go forward.
-          fwd_motor_dir(); 
-        }
-      }
-  }
+      // P: Proportional
+      // I: Integral (accumulate)
+      // D: Derivative (difference)
 
 
-  // Serial.println(is_ready);
-  
-  // if(sensor.distanceMillimeters <= 100 ) {
-  //   analogWrite(LMotor_PWM, NO_SPEED);
-  //   analogWrite(RMotor_PWM, NO_SPEED);
-  //   flip_motor_dir();
-  //   analogWrite(LMotor_PWM, speed);
-  //   analogWrite(RMotor_PWM, speed);
-  //   delay(100);
-  //   analogWrite(LMotor_PWM, NO_SPEED);
-  //   analogWrite(RMotor_PWM, NO_SPEED);
-  //   flip_motor_dir();
-  // }
-  // else {
-  //   analogWrite(LMotor_PWM, speed);
-  //   analogWrite(RMotor_PWM, speed);
-  // }
+      // e(t) = 
+      // The difference between the target and the current.
+      // For us, that is the difference between our current distance to the wall, and 200 mm from the wall.
+      int e = sensor.distanceMillimeters - target_distance;
+      data_ready = false;
+      int_e += e * dt;
+      int_e = constrain(int_e, -INT16_MAX, INT16_MAX);
 
-  // ============= ^^^^^^^^^^ ========================================
+      float d_e = ((float)e - (float)last_error) / dt;
+      last_error = e;
 
-  // ======================== vvvvvvvvvvvvvvvvvvvvvv ======= Bad Accelerometer Code
-  // int acc_x = analogRead(acc_x_pin);
-  // int acc_y = analogRead(acc_y_pin);
-  // int acc_z = analogRead(acc_z_pin);
+      //u(t) = 
+      // The resulting 'power' of the motors. Also encodes direction.
+      // u(t) = K_p * e(t)  +  K_i * Int_0_t e(t)  +  [ K_d * d*e(t) ]/dt
+      float u = K_p * (float)e   + K_i * int_e  +  K_d * d_e;
+      u = constrain(u, -(float)INT16_MAX, (float)INT16_MAX);
+      Serial.print("helpme:");
+      Serial.print(sensor.distanceMillimeters);
 
-  // int acc_x_g = acc_x - acc_x_offset;
-  // vel_x_g += acc_x_g * dt;
+      Serial.print(",dt:");
+      Serial.print(dt);
 
-  // float acc_x_mps2 = acc_x_g / 9.8;
-  // float vel_x_mps2 = vel_x_g / 9.8;
-  // // float acc_x = analogRead(acc_x_pin)/1023.0;
-  // // float acc_y = analogRead(acc_y_pin)/1023.0;
-  // // float acc_z = analogRead(acc_z_pin)/1023.0;
-  
-  // Serial.print("Acc_X:");
-  // Serial.print(acc_x_g);
-  // Serial.print(",");
-  // Serial.print("Vel_X:");
-  // Serial.print(vel_x_g);
-  // //   Serial.print("Y:");
-  // // Serial.print(acc_y);
-  // // Serial.print(",");
-  // //   Serial.print("Z:");
-  // // Serial.print(acc_z);
-  // Serial.println();
+      Serial.print(",e:");
+      Serial.print(e);
 
-  // ===================== ^^^^^^^^^^^^^^^^^^^^^^^^^^^ =============================
+      Serial.print(",int_e:");
+      Serial.print(int_e);
 
-  // Serial.print(sensor.distanceMillimeters);
-  // Serial.println();
-  delay(50);
+      Serial.print(",d_e:");
+      Serial.print(d_e);
+
+      set_motor_power((int)u);
+      Serial.print(",u:");
+      Serial.print(u);
+      Serial.println();
+
+    }
+
 }
