@@ -53,15 +53,25 @@ void dist_sensor_init() {
 
 void dist_pid_init(PID* self){
     // Initialize Distance Sensor<->Motor PID.
+  Serial.println("got here5.");
+
     while(!dist_data_ready){}
-    sensor.readOutputRegs();
+    Serial.println("got here6.");
     dist_data_ready = false;
+    delay(1000);
+    sensor.readOutputRegs();
+    Serial.println("got here8.");
+    Serial.println("got here7.abababab");
+    dist_data_ready = false;
+
     dist_pid.last_time = millis();
+    Serial.println("got here9.");
     dist_pid.setpoint = 200;
     dist_pid.last_e = sensor.distanceMillimeters - dist_pid.setpoint; // init the derivative.
     dist_pid.K_p = 7.0;
     dist_pid.K_i = 0.2;
     dist_pid.K_d = 0.5;
+    Serial.println("got here10.");
 }
 
 void wall_dist_update(PID* self) {
