@@ -33,5 +33,7 @@ void loop() {
   print_pid(&gyro_pid, "gyro");
   print_pid(&dist_pid, "dist");
 
-  set_motor_power(dist_pid.u + gyro_pid.u);
+  trans_pow = dist_pid.u;
+  rot_pow = gyro_pid.u;
+  update_motors();
 }

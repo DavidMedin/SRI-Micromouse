@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#define freak_out(motor) if( !(motor == 0 || motor == 1) ){ Serial.println("\nError! Bad motor usage!"); }
 /*
 Motor Magic:
 Black : ground
@@ -13,25 +14,74 @@ Orange : Forward / Reverse. Overcuirrent protection is 0.8A.
 //0 (max speed) (0v) - 1023 (min speed) (5v)
 const int NO_SPEED = 1023;
 const int ALL_SPEED = 0;
-int speed = NO_SPEED;
-int acc = 100;
-//int dir = 1;
 
 // *in is the input from the motor to the computer.
 //        PWM | In  | Dir
 // right : 10   11    8 
 // left :  9    12    13
 
-int RMotor_PWM = 10;
-int LMotor_PWM = 9;
 
-int RMotor_Dir_Pin = 8;
-int LMotor_Dir_Pin = 13;
-bool RMotor_Dir = false;
-bool LMotor_Dir = true;
+// [left, right]
+int motors_pwm_pin[2] = {9, 10};
+int motors_dir_pin[2] = {13, 8};
+bool motors_dir[2] = {true, false};
 
-int RMotor_In = 11;
-int LMotor_In = 12;
+
+void flip_motor_dir(int motor) {
+  freak_out(motor);
+  motors_dir[motor] = !motors_dir[motor];
+  digitalWrite(motors_dir_pin[motor], motors_dir[motor]);
+}
+void flip_motors_dir() {
+  flip_motor_dir(0);
+  flip_motor_dir(1);
+}
+
+void fwd_motor_dir(int motor){
+  freak_out(motor);
+
+  if(motor == 0)
+    motors_dir[0] = true;
+  else
+    motors_dir[1] = false;
+
+  digitalWrite(motors_dir_pin[motor], motors_dir[motor]);
+}
+void bwd_motor_dir(int motor){
+  freak_out(motor);
+
+  if(motor == 0)
+    motors_dir[0] = false;
+  else
+    motors_dir[1] = true;
+
+  digitalWrite(motors_dir_pin[motor], motors_dir[motor]);
+}
+void fwd_motors_dir(){
+  fwd_motor_dir(0);
+  fwd_motor_dir(1);
+}
+void bwd_motors_dir(){
+  bwd_motor_dir(0);
+  bwd_motor_dir(1);
+}
+
+const int max_power = 300; // nice
+int trans_pow = 0; // -1023 to 1023. May be limited by update_motors() [ like if we have a max_power ].
+int rot_pow = 0; // negative values are for turning left, and positive values are rotating right.
+int speeds[2] = {NO_SPEED, NO_SPEED};
+void update_motors() {
+  int bounded_power_l = constrain( trans_pow - rot_pow, -max_power, max_power);
+  int bounded_power_r = constrain( trans_pow + rot_pow, -max_power, max_power);
+
+  bounded_power_l >= 0 ? fwd_motor_dir(0) : bwd_motor_dir(0);
+  bounded_power_r >= 0 ? fwd_motor_dir(1) : bwd_motor_dir(1);
+  int abs_speed_l = ( -1 * ( abs(bounded_power_l) - 500 ) ) + 500;
+  int abs_speed_r = ( -1 * ( abs(bounded_power_r) - 500 ) ) + 500;
+
+  analogWrite(motors_pwm_pin[0], abs_speed_l );
+  analogWrite(motors_pwm_pin[1], abs_speed_r );
+}
 
 void motors_init(){
   // Set register magic to allow PWM to go faster than it should normally.
@@ -39,54 +89,12 @@ void motors_init(){
   TCCR1A = 0b00000011;  // 10 bit
   TCCR1B = 0b00001001;  // x1 fast pwm mode
 
-  // Tell motors to go speedy through PWM.
-  analogWrite(LMotor_PWM, speed);
-  analogWrite(RMotor_PWM, speed);
+  pinMode(motors_dir_pin[0], OUTPUT);
+  pinMode(motors_dir_pin[1], OUTPUT);
+  digitalWrite(motors_dir_pin[0], motors_dir[0]);
+  digitalWrite(motors_dir_pin[1], motors_dir[1]);
 
-  // Go 'forward'
-  pinMode(RMotor_Dir_Pin, OUTPUT);
-  pinMode(LMotor_Dir_Pin, OUTPUT);
-  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
-  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
-}
-
-
-void flip_motor_dir() {
-  RMotor_Dir = !RMotor_Dir;
-  LMotor_Dir = !LMotor_Dir;
-  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
-  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
-}
-
-void fwd_motor_dir() {
-  RMotor_Dir = false;
-  LMotor_Dir = true;
-  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
-  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
-}
-
-void bwd_motor_dir() {
-  RMotor_Dir = true;
-  LMotor_Dir = false;
-  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
-  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
-}
-
-// Power referes to 'effort', and direction.
-// 1023 is full 'power' (attempt max speed), 0 is 'no power',
-// and -1023 is full power in the opposite direction.
-void set_motor_power(int power) {
-    const int max_power = 300; // nice
-    int bounded_power = constrain( power, -max_power, max_power);
-    // Serial.print(",bounded_power:");
-    // Serial.print(power);
-    bounded_power >= 0 ? fwd_motor_dir() : bwd_motor_dir();
-    int abs_speed = ( -1 * ( abs(bounded_power) - 500 ) ) + 500;
-
-    analogWrite(RMotor_PWM, abs_speed );
-    analogWrite(LMotor_PWM, abs_speed );
-    // Serial.print(",motors:");
-    // Serial.print(abs_speed);
-    // Serial.print(",dir:");
-    // Serial.print(LMotor_Dir);
+  // Tell motors to stop.
+  // set_motor_power(0);
+  update_motors();
 }
