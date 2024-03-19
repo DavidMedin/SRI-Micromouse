@@ -9,7 +9,6 @@
 //https://ulrichbuschbaum.wordpress.com/2015/01/18/using-the-mpu6050s-dlpf/
 MPU9250 mpu;
 unsigned long int gyro_before_time = 0;
-float rotation = 0;
 float bias = 0;
 float sample_gyro_z(int sample_count) {
   float avg = 0;
@@ -34,6 +33,7 @@ void gyro_init(){
   
 }
 
+float rotation = 0;
 PID gyro_pid;
 
 void gyro_pid_init(PID* self){
@@ -67,6 +67,10 @@ void gyro_pid_update(PID* self){
     float dt = ( (float)(this_time - self->last_time) / 1000.0 ) ; // dt = delta time, the time since the last loop.
     self->last_time = this_time;
 
+    // Update the 'rotational position' from the 'rotational velocity'.
+    float rot_vel = sample_gyro_z(100);
+    rotation += rot_vel * dt;
+
     // PID Loop:
 
     // P: Proportional
@@ -76,7 +80,7 @@ void gyro_pid_update(PID* self){
     // e(t) = 
     // The difference between the target and the current.
     // For us, that is the difference between our current distance to the wall, and 200 mm from the wall.
-    float e = sample_gyro_z(100) - self->setpoint;
+    float e = rotation - self->setpoint;
     self->int_e += e * dt;
     self->int_e = constrain(self->int_e, (float)-INT16_MAX, (float)INT16_MAX);
 
