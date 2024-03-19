@@ -1,7 +1,7 @@
 #include <OPT3101.h>
 #include <Wire.h>
 #include <Arduino.h>
-
+#include <MPU9250.h>
 /*
 Motor Magic:
 Black : ground
@@ -63,6 +63,97 @@ int acc_x_offset = 0;
 // 250?
 // ====================================
 
+void motors_init(){
+  // Set register magic to allow PWM to go faster than it should normally.
+  // D9 - D10 15.6 kHz 10 bit
+  TCCR1A = 0b00000011;  // 10 bit
+  TCCR1B = 0b00001001;  // x1 fast pwm mode
+
+  // Tell motors to go speedy through PWM.
+  analogWrite(LMotor_PWM, speed);
+  analogWrite(RMotor_PWM, speed);
+
+  // Go 'forward'
+  pinMode(RMotor_Dir_Pin, OUTPUT);
+  pinMode(LMotor_Dir_Pin, OUTPUT);
+  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
+  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
+}
+
+void dist_sensor_init() {
+  pinMode(dist_sample_ready_pin, INPUT);
+
+  // Sensor Initialization vvvvvvvvvvvvvvvvv
+  sensor.init();
+  // yoink : https://github.com/pololu/opt3101-arduino/blob/master/examples/Basic/Basic.ino
+  if(sensor.getLastError() != 0) {
+    Serial.print(F("Failed to initialize OPT3101: error "));
+    Serial.println(sensor.getLastError());
+    while (1) {}
+  }
+
+  sensor.setFrameTiming(dist_sensor_sample_count); 
+  // 500 samples * 0.25 ms + 6% = whatevre
+  // 256 samples * 0.25 ms + 6% = 68 ms
+  sensor.setChannel(1); // TX1, middle channel
+
+  sensor.setBrightness(OPT3101Brightness::Adaptive);
+  sensor.setContinuousMode();
+  sensor.enableDataReadyOutput(1);
+
+  attachInterrupt(digitalPinToInterrupt(dist_sample_ready_pin), data_ready_func, RISING);
+  sensor.enableTimingGenerator();
+}
+
+//https://github.com/hideakitai/MPU9250
+// DLPF : Digital Low Pass Filter
+//https://ulrichbuschbaum.wordpress.com/2015/01/18/using-the-mpu6050s-dlpf/
+MPU9250 mpu;
+unsigned long int gyro_before_time = 0;
+float rotation = 0;
+float bias = 0;
+float sample_gyro_z(int sample_count) {
+  //const sample_count = 10;
+  // static int buff[sample_count];
+  float avg = 0;
+  // float bias = mpu.getGyroBiasZ(); 
+  for(int i = 0;i < sample_count;i++){
+    while(!mpu.available()) {}
+    mpu.update_accel_gyro();
+    float reading = mpu.getGyroZ() - bias;
+    avg += reading / sample_count;
+  }
+  return avg;
+}
+
+void gyro_init(){
+  delay(1000);
+
+  if (!mpu.setup(0x68)) {  // change to your own address
+    while (1) {
+      Serial.println("MPU connection failed. Please check your connection with `connection_check` example.");
+      delay(5000);
+    }
+  }
+  mpu.verbose(true);
+  Serial.print("Before Gyro z bias : ");
+  Serial.println(mpu.getGyroBias(0));
+  Serial.println(mpu.getGyroBias(1));
+  Serial.println(mpu.getGyroBias(2));
+  // mpu.calibrateAccelGyro();
+  Serial.print("After Gyro z bias : ");
+  Serial.println(mpu.getGyroBias(0));
+  Serial.println(mpu.getGyroBias(1));
+  Serial.println(mpu.getGyroBias(2));
+  bias = sample_gyro_z(100);
+  // mpu.setGyroBias(0, 0, bias);
+
+  // mpu.print_calibration();
+  mpu.verbose(false);
+  delay(1000);
+  gyro_before_time = millis();
+}
+
 
 struct PID {
   float K_p = 1.0;
@@ -75,8 +166,6 @@ struct PID {
   float u=0;
   void (*update)();
 };
-
-
 // float K_p = 7.0;
 // float K_i = 0.2; // 2
 // float K_d = 0.5; // 1
@@ -162,52 +251,21 @@ void pid_init() {
   // Initialize Gyro<->Motor PID.
 }
 
-
-
 void setup() {
   Serial.begin(115200);
   Wire.begin(); // start I2C things
+  https://forum.arduino.cc/t/internal-pull-up-resistor-in-i2c-arduino-uno/977853/17
+  // Disable i2c pullup resistors
+  digitalWrite(SDA, 0);
+  digitalWrite(SCL, 0);
 
-  // Set register magic to allow PWM to go faster than it should normally.
-  // D9 - D10 15.6 kHz 10 bit
-  TCCR1A = 0b00000011;  // 10 bit
-  TCCR1B = 0b00001001;  // x1 fast pwm mode
+  motors_init();
 
-  // Tell motors to go speedy through PWM.
-  analogWrite(LMotor_PWM, speed);
-  analogWrite(RMotor_PWM, speed);
-
-  // Go 'forward'
-  pinMode(RMotor_Dir_Pin, OUTPUT);
-  pinMode(LMotor_Dir_Pin, OUTPUT);
-  digitalWrite(RMotor_Dir_Pin, RMotor_Dir);
-  digitalWrite(LMotor_Dir_Pin, LMotor_Dir);
-
-  pinMode(dist_sample_ready_pin, INPUT);
-
-  // Sensor Initialization vvvvvvvvvvvvvvvvv
-  sensor.init();
-  // yoink : https://github.com/pololu/opt3101-arduino/blob/master/examples/Basic/Basic.ino
-  if(sensor.getLastError() != 0) {
-    Serial.print(F("Failed to initialize OPT3101: error "));
-    Serial.println(sensor.getLastError());
-    while (1) {}
-  }
-
-  sensor.setFrameTiming(dist_sensor_sample_count); 
-  // 500 samples * 0.25 ms + 6% = whatevre
-  // 256 samples * 0.25 ms + 6% = 68 ms
-  sensor.setChannel(1); // TX1, middle channel
-
-  sensor.setBrightness(OPT3101Brightness::Adaptive);
-  sensor.setContinuousMode();
-  sensor.enableDataReadyOutput(1);
-
-  attachInterrupt(digitalPinToInterrupt(dist_sample_ready_pin), data_ready_func, RISING);
-  sensor.enableTimingGenerator();
-  // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  dist_sensor_init();
 
   pid_init();
+
+  gyro_init();
 }
 
 // ================= Robot State =========
@@ -260,6 +318,58 @@ unsigned long int last_loop = 0;
 void loop() {
 
 
+  // if(mpu.available()) {
+  //   mpu.update_accel_gyro();
+
+    // float gyro_x = mpu.getGyroX();
+    // float gyro_y = mpu.getGyroY();
+  float gyro_z = sample_gyro_z(100);
+
+  unsigned long int now = millis();
+  unsigned long int dt = now - gyro_before_time;
+  gyro_before_time = now;
+
+  rotation += gyro_z * (float)dt;
+
+  // Serial.print("gyro_x:");
+  // Serial.print(gyro_x);
+  // Serial.print(",gyro_y:");
+  // Serial.print(gyro_y);
+  Serial.print("gyro_z:");
+  Serial.print(gyro_z);
+  // Serial.print(",");
+
+  Serial.print(",rotation:");
+  Serial.print(rotation);
+  Serial.print(",");
+  // }
+
+  // if(mpu.available()) {
+  //   mpu.update_accel_gyro();
+
+    // float gyro_x = mpu.getGyroX();
+    // float gyro_y = mpu.getGyroY();
+  float gyro_z = sample_gyro_z(100);
+
+  unsigned long int now = millis();
+  unsigned long int dt = now - gyro_before_time;
+  gyro_before_time = now;
+
+  rotation += gyro_z * (float)dt;
+
+  // Serial.print("gyro_x:");
+  // Serial.print(gyro_x);
+  // Serial.print(",gyro_y:");
+  // Serial.print(gyro_y);
+  Serial.print("gyro_z:");
+  Serial.print(gyro_z);
+  // Serial.print(",");
+
+  Serial.print(",rotation:");
+  Serial.print(rotation);
+  Serial.print(",");
+  // }
+
     if(dist_data_ready) {
 
       sensor.readOutputRegs();
@@ -309,8 +419,7 @@ void loop() {
       set_motor_power((int)u);
       Serial.print(",u:");
       Serial.print(u);
-      Serial.println();
 
     }
-
+    Serial.println();
 }
