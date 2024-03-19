@@ -64,30 +64,104 @@ int acc_x_offset = 0;
 // ====================================
 
 
-float K_p = 7.0;
-float K_i = 0.2; // 2
-float K_d = 0.5; // 1
+struct PID {
+  float K_p = 1.0;
+  float K_i = 1.0;
+  float K_d = 1.0;
+  float last_time;
+  float setpoint;
+  float int_e=0;
+  float last_e;
+  float u=0;
+  void (*update)();
+};
 
+
+// float K_p = 7.0;
+// float K_i = 0.2; // 2
+// float K_d = 0.5; // 1
+
+
+// float int_e = 0;
+// int16_t last_error = 0;
+PID distance_pid;
 int32_t target_distance = 200;
 
-float int_e = 0;
-int16_t last_error = 0;
-
-volatile bool data_ready = false;
+volatile bool dist_data_ready = false;
 void data_ready_func() {
-    data_ready = true;
+    dist_data_ready = true;
 }
+
+void wall_dist_update() {
+ if(dist_data_ready) {
+
+      sensor.readOutputRegs();
+      // read time
+      unsigned long int this_loop = millis(); // milliseconds
+      float dt = ( (float)(this_loop - last_loop) / 1000.0 ) ; // dt = delta time, the time since the last loop.
+      last_loop = this_loop;
+
+      // PID Loop:
+
+      // P: Proportional
+      // I: Integral (accumulate)
+      // D: Derivative (difference)
+
+
+      // e(t) = 
+      // The difference between the target and the current.
+      // For us, that is the difference between our current distance to the wall, and 200 mm from the wall.
+      int e = sensor.distanceMillimeters - target_distance;
+      dist_data_ready = false;
+      int_e += e * dt;
+      int_e = constrain(int_e, -INT16_MAX, INT16_MAX);
+
+      float d_e = ((float)e - (float)last_error) / dt;
+      last_error = e;
+
+      //u(t) = 
+      // The resulting 'power' of the motors. Also encodes direction.
+      // u(t) = K_p * e(t)  +  K_i * Int_0_t e(t)  +  [ K_d * d*e(t) ]/dt
+      float u = K_p * (float)e   + K_i * int_e  +  K_d * d_e;
+      u = constrain(u, -(float)INT16_MAX, (float)INT16_MAX);
+      Serial.print("helpme:");
+      Serial.print(sensor.distanceMillimeters);
+
+      Serial.print(",dt:");
+      Serial.print(dt);
+
+      Serial.print(",e:");
+      Serial.print(e);
+
+      Serial.print(",int_e:");
+      Serial.print(int_e);
+
+      Serial.print(",d_e:");
+      Serial.print(d_e);
+
+      set_motor_power((int)u);
+      Serial.print(",u:");
+      Serial.print(u);
+      Serial.println();
+
+    } 
+}
+
 
 void pid_init() {
-  if(data_ready){
+  // Initialize Distance Sensor<->Motor PID.
+  if(dist_data_ready){
     sensor.readOutputRegs();
-    data_ready = false;
-
-    last_error = sensor.distanceMillimeters - target_distance; // init the derivative.
-  	int_e = 0; // init the integral
+    dist_data_ready = false;
+    distance_pid.last_e = sensor.distanceMillimeters - target_distance; // init the derivative.
+    distance_pid.K_p = 7.0;
+    distance_pid.K_i = 0.2;
+    distance_pid.K_d = 0.5;
   }
 
+  // Initialize Gyro<->Motor PID.
 }
+
 
 
 void setup() {
@@ -186,7 +260,7 @@ unsigned long int last_loop = 0;
 void loop() {
 
 
-    if(data_ready) {
+    if(dist_data_ready) {
 
       sensor.readOutputRegs();
       // read time
@@ -205,7 +279,7 @@ void loop() {
       // The difference between the target and the current.
       // For us, that is the difference between our current distance to the wall, and 200 mm from the wall.
       int e = sensor.distanceMillimeters - target_distance;
-      data_ready = false;
+      dist_data_ready = false;
       int_e += e * dt;
       int_e = constrain(int_e, -INT16_MAX, INT16_MAX);
 
